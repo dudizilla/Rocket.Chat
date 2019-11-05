@@ -1,27 +1,23 @@
 import React, { createContext, useCallback, useContext, useMemo, useRef } from 'react';
 
-import { useSettingsState } from './SettingsState';
-import { useReactiveValue } from '../../../hooks/useReactiveValue';
+import { useSettingState } from './SettingsState';
 
 const SettingContext = createContext({});
 
+const useStateRef = (value) => {
+	const ref = useRef(value);
+	ref.current = value;
+	return ref;
+};
+
 export function SettingState({ children, setting: _id }) {
-	const { state, persistedState, hydrate, isDisabled } = useSettingsState();
-
-	const setting = state.find((setting) => setting._id === _id);
-	const disabled = useReactiveValue(() => isDisabled(setting), [setting.blocked, setting.enableQuery]);
-
-	const settingRef = useRef();
-	const persistedStateRef = useRef();
-
-	settingRef.current = setting;
-	persistedStateRef.current = persistedState;
+	const { setting, persistedSetting, disabled, hydrate } = useSettingState(_id);
+	const settingRef = useStateRef(setting);
+	const persistedSettingRef = useStateRef(persistedSetting);
 
 	const update = useCallback((data) => {
 		const setting = { ...settingRef.current, ...data };
-		const { current: persistedState } = persistedStateRef;
-
-		const persistedSetting = persistedState.find(({ _id }) => _id === setting._id);
+		const { current: persistedSetting } = persistedSettingRef;
 
 		const changes = [{
 			_id: setting._id,
@@ -34,10 +30,9 @@ export function SettingState({ children, setting: _id }) {
 	}, []);
 
 	const reset = useCallback(() => {
-		const { current: setting } = settingRef;
-		const { current: persistedState } = persistedStateRef;
+		const { current: persistedSetting } = persistedSettingRef;
 
-		const { _id, value, packageValue, editor } = persistedState.find(({ _id }) => _id === setting._id);
+		const { _id, value, packageValue, editor } = persistedSetting;
 		const changes = [{
 			_id,
 			value: packageValue,

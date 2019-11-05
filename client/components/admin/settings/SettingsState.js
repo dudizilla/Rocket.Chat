@@ -1,5 +1,7 @@
 import { Mongo } from 'meteor/mongo';
-import React, { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState } from 'react';
+import mitt from 'mitt';
+import React, { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState, useMemo } from 'react';
+import { Tracker } from 'meteor/tracker';
 
 import { PrivateSettingsCachedCollection } from '../../../../app/ui-admin/client/SettingsCachedCollection';
 
@@ -44,22 +46,21 @@ const stateReducer = (state, { type, payload }) => {
 	return state;
 };
 
-export function SettingsState({ children }) {
-	const [state, updateState] = useReducer(stateReducer, []);
-	const [persistedState, updatePersistedState] = useReducer(stateReducer, []);
-	const [isLoading, setLoading] = useState(true);
+const useStateRef = (value) => {
+	const ref = useRef(value);
+	ref.current = value;
+	return ref;
+};
 
-	const updateStates = (action) => {
-		updateState(action);
-		updatePersistedState(action);
-	};
+export function SettingsState({ children }) {
+	const [isLoading, setLoading] = useState(true);
 
 	const stopLoading = () => {
 		setLoading(false);
 	};
 
-	const persistedCollectionRef = useRef();
 
+	const persistedCollectionRef = useRef();
 	useEffect(() => {
 		if (!privateSettingsCachedCollection) {
 			privateSettingsCachedCollection = new PrivateSettingsCachedCollection();
@@ -69,9 +70,53 @@ export function SettingsState({ children }) {
 		persistedCollectionRef.current = privateSettingsCachedCollection.collection;
 	}, []);
 
-	const { current: persistedCollection } = persistedCollectionRef;
 
 	const [collection] = useState(() => new Mongo.Collection(null));
+	const collectionRef = useStateRef(collection);
+
+
+	const [persistedState, updatePersistedState] = useReducer(stateReducer, []);
+	const persistedStateRef = useStateRef(persistedState);
+
+	const [stateEmitter] = useState(() => mitt());
+
+	const isDisabled = useCallback(({ blocked, enableQuery }) => {
+		if (blocked) {
+			return true;
+		}
+
+		if (!enableQuery) {
+			return false;
+		}
+
+		const { current: collection } = collectionRef;
+
+		const queries = [].concat(typeof enableQuery === 'string' ? JSON.parse(enableQuery) : enableQuery);
+		return !queries.every((query) => !!collection.findOne(query));
+	}, []);
+
+	const enhancedReducer = useCallback((state, action) => {
+		const newState = stateReducer(state, action);
+
+		if (action.type === 'hydrate') {
+			action.payload.forEach(({ _id }) => {
+				const setting = newState.find((setting) => setting._id === _id);
+				const persistedSetting = persistedStateRef.current.find((setting) => setting._id === _id);
+				const disabled = Tracker.nonreactive(() => isDisabled(setting));
+				stateEmitter.emit(_id, { setting, persistedSetting, disabled });
+			});
+		}
+
+		return newState;
+	}, [persistedStateRef]);
+
+	const [state, updateState] = useReducer(enhancedReducer, []);
+	const stateRef = useStateRef(state);
+
+	const updateStates = (action) => {
+		updatePersistedState(action);
+		updateState(action);
+	};
 
 	useEffect(() => {
 		if (isLoading) {
@@ -100,7 +145,7 @@ export function SettingsState({ children }) {
 			updateStates({ type: 'remove', payload: _id });
 		};
 
-		const persistedFieldsQueryHandle = persistedCollection.find()
+		const persistedFieldsQueryHandle = persistedCollectionRef.current.find()
 			.observe({
 				added,
 				changed,
@@ -123,12 +168,10 @@ export function SettingsState({ children }) {
 		}, 70);
 	};
 
-	const collectionRef = useRef();
 	const updateAtCollectionRef = useRef();
 	const updateStateRef = useRef();
 
 	useEffect(() => {
-		collectionRef.current = collection;
 		updateAtCollectionRef.current = updateAtCollection;
 		updateStateRef.current = updateState;
 	});
@@ -140,30 +183,46 @@ export function SettingsState({ children }) {
 		updateState({ type: 'hydrate', payload: changes });
 	}, []);
 
-	const isDisabled = useCallback(({ blocked, enableQuery }) => {
-		if (blocked) {
-			return true;
-		}
+	const group = useMemo(() => {
 
-		if (!enableQuery) {
-			return false;
-		}
+	}, [persistedState]);
 
-		const { current: collection } = collectionRef;
-
-		const queries = [].concat(typeof enableQuery === 'string' ? JSON.parse(enableQuery) : enableQuery);
-		return !queries.every((query) => !!collection.findOne(query));
-	}, []);
-
-	const contextValue = {
+	const contextValue = useMemo(() => ({
 		isLoading,
-		state,
-		persistedState,
 		hydrate,
 		isDisabled,
-	};
+		stateRef,
+		persistedStateRef,
+		stateEmitter,
+	}), [
+		isLoading,
+		hydrate,
+		isDisabled,
+		stateRef,
+		persistedStateRef,
+		stateEmitter,
+	]);
 
 	return <SettingsContext.Provider children={children} value={contextValue} />;
 }
 
 export const useSettingsState = () => useContext(SettingsContext);
+
+export const useSettingState = (_id) => {
+	const { stateRef, persistedStateRef, stateEmitter, hydrate } = useContext(SettingsContext);
+	const [state, setState] = useState(() => ({
+		setting: stateRef.current.find((setting) => setting._id === _id),
+		persistedSetting: persistedStateRef.current.find((setting) => setting._id === _id),
+		disabled: false,
+	}));
+
+	useEffect(() => {
+		stateEmitter.on(_id, setState);
+
+		return () => {
+			stateEmitter.off(_id, setState);
+		};
+	}, [_id]);
+
+	return { ...state, hydrate };
+};

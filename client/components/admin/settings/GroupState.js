@@ -13,7 +13,9 @@ import { useSettingsState } from './SettingsState';
 const GroupContext = createContext({});
 
 export function GroupState({ groupId }) {
-	const { state, persistedState, hydrate } = useSettingsState();
+	const { stateRef, persistedStateRef, hydrate } = useSettingsState();
+
+	const { current: state } = stateRef;
 
 	const group = state.find(({ _id, type }) => _id === groupId && type === 'group');
 	const settings = state.filter(({ group }) => group === groupId);
@@ -23,12 +25,10 @@ export function GroupState({ groupId }) {
 	const batchSetSettings = useBatchSetSettings();
 
 	const settingsRef = useRef();
-	const persistedStateRef = useRef();
 	const hydrateRef = useRef();
 
 	useEffect(() => {
 		settingsRef.current = settings;
-		persistedStateRef.current = persistedState;
 		hydrateRef.current = hydrate;
 	});
 

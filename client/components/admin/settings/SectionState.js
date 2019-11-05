@@ -6,10 +6,12 @@ import { useGroup } from './GroupState';
 const SectionContext = createContext({});
 
 export function SectionState({ children, section: name }) {
-	const { state, persistedState, hydrate } = useSettingsState();
+	const { stateRef, persistedStateRef, hydrate } = useSettingsState();
 	const { _id: groupId } = useGroup();
 
 	name = name || '';
+
+	const { current: state } = stateRef;
 
 	const settings = state.filter(({ group, section }) => group === groupId
 		&& ((!name && !section) || (name === section)));
@@ -18,11 +20,9 @@ export function SectionState({ children, section: name }) {
 	const settingsIds = settings.map(({ _id }) => _id);
 
 	const settingsRef = useRef();
-	const persistedStateRef = useRef();
 
 	useEffect(() => {
 		settingsRef.current = settings;
-		persistedStateRef.current = persistedState;
 	});
 
 	const reset = useCallback(() => {
